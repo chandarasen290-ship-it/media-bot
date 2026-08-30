@@ -73,8 +73,16 @@ class TikTokDownloader:
 
     async def _download_tikwm(self, url: str, temp_dir: str, result: MediaResult) -> Optional[MediaResult]:
         api_endpoint = "https://www.tikwm.com/api/"
+        
+        # Generate a random IP to bypass basic rate limiting / cloud blocks
+        import random
+        fake_ip = f"{random.randint(11, 250)}.{random.randint(11, 250)}.{random.randint(11, 250)}.{random.randint(11, 250)}"
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "X-Forwarded-For": fake_ip,
+            "X-Real-IP": fake_ip,
+            "CF-Connecting-IP": fake_ip
         }
 
         timeout = aiohttp.ClientTimeout(total=45, connect=10)
@@ -234,10 +242,11 @@ class TikTokDownloader:
         # Check for images first
         image_links = re.findall(r'<a[^>]+href="([^"]+)"[^>]*download[^>]*>', html)
         if image_links:
+            import logging
+            logger = logging.getLogger("MediaDownloaderBot.TikTok")
             logger.info("SSSTIK fallback detected %d images", len(image_links))
             async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
                 for idx, img_url in enumerate(image_links):
-                    # ssstik puts an audio file as the last link sometimes, we only want jpg/webp/png
                     if "api16-normal" in img_url and "play" in img_url:
                         continue
                     
@@ -250,7 +259,7 @@ class TikTokDownloader:
                         async with session.get(img_url) as img_resp:
                             if img_resp.status == 200:
                                 async with aiofiles.open(file_path, "wb") as f:
-                                    async for chunk in img_resp.content.iter_chunked(CHUNK_SIZE):
+                                    async for chunk in img_resp.content.iter_chunked(4096):
                                         await f.write(chunk)
                                 
                                 m_type = MediaType.AUDIO if ext == ".mp3" else MediaType.PHOTO
@@ -268,13 +277,15 @@ class TikTokDownloader:
         video_match = re.search(r'href="([^"]+)"[^>]*>Without watermark', html)
         if video_match:
             video_url = video_match.group(1)
+            import logging
+            logger = logging.getLogger("MediaDownloaderBot.TikTok")
             logger.info("SSSTIK fallback detected video")
             video_path = os.path.join(temp_dir, "video.mp4")
             async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
                 async with session.get(video_url) as vid_resp:
                     if vid_resp.status == 200:
                         async with aiofiles.open(video_path, "wb") as f:
-                            async for chunk in vid_resp.content.iter_chunked(CHUNK_SIZE):
+                            async for chunk in vid_resp.content.iter_chunked(4096):
                                 await f.write(chunk)
                         result.media_files.append(MediaFile(file_path=video_path, media_type=MediaType.VIDEO))
                         result.title = "TikTok Video"
